@@ -1,0 +1,10 @@
+# Local
+.DS_Store
+.vscode/
+node_modules/
+
+# Build artifacts (none by default)
+dist/
+
+# Secrets
+.env
