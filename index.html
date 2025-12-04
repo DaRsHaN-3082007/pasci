@@ -1,0 +1,659 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>LocalVault — Simple Browser Password Manager</title>
+<style>
+  :root{
+    --bg:#0f1724; --panel:#0b1220; --muted:#94a3b8; --accent:#06b6d4; --accent-2:#7c3aed;
+    --glass: rgba(255,255,255,0.03);
+  }
+  *{box-sizing:border-box;font-family:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;}
+  html,body{height:100%; margin:0; background:linear-gradient(180deg,#041028 0%, #071129 60%); color:#e6eef6;}
+  .app{display:flex;height:100vh;gap:18px;padding:18px;}
+  .sidebar{width:280px;background:linear-gradient(180deg,var(--panel), rgba(10,16,28,0.9));border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:12px}
+  .logo{font-weight:700;display:flex;align-items:center;gap:8px}
+  .logo .dot{width:10px;height:10px;border-radius:50%;background:var(--accent)}
+  .accounts{flex:1;overflow:auto;padding-right:6px}
+  .account-item{padding:10px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer}
+  .account-item:hover{background:var(--glass)}
+  .account-item.active{background:linear-gradient(90deg, rgba(6,182,212,0.12), rgba(124,58,237,0.06));box-shadow:0 2px 8px rgba(7,11,25,0.6)}
+  .controls{display:flex;gap:8px}
+  button.btn{background:linear-gradient(90deg,var(--accent),var(--accent-2));border:none;color:#04202a;padding:8px 12px;border-radius:8px;font-weight:600;cursor:pointer}
+  button.ghost{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted);padding:8px 10px;border-radius:8px}
+  .main{flex:1;display:flex;flex-direction:column;gap:12px}
+  .panel{background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));padding:16px;border-radius:12px;box-shadow:0 6px 20px rgba(2,6,23,0.6)}
+  .topbar{display:flex;justify-content:space-between;align-items:center;gap:12px}
+  .search input{background:transparent;border:1px solid rgba(255,255,255,0.04);padding:8px 12px;border-radius:10px;color:var(--muted);width:320px}
+  .entries{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;margin-top:12px}
+  .entry{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));padding:14px;border-radius:10px;position:relative}
+  .entry h4{margin:0 0 6px 0}
+  .meta{color:var(--muted);font-size:13px;margin-bottom:8px}
+  .entry .actions{display:flex;gap:8px;position:absolute;right:10px;top:10px}
+  .small{font-size:13px;padding:6px 8px;border-radius:8px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.02);color:var(--muted)}
+  .modal-bg{position:fixed;inset:0;background:rgba(2,6,23,0.6);display:none;align-items:center;justify-content:center;z-index:50}
+  .modal{width:720px;max-width:95%;background:#061226;padding:18px;border-radius:12px}
+  label{display:block;margin:10px 0 6px;color:var(--muted);font-size:13px}
+  input[type=text], input[type=password], textarea, select{width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:#e6eef6}
+  .row{display:flex;gap:8px}
+  .row .col{flex:1}
+  .footer-note{font-size:13px;color:var(--muted);margin-top:8px}
+  .danger{color:#ffb4b4}
+  .kbd{background:rgba(255,255,255,0.03);padding:6px 8px;border-radius:6px;font-weight:600}
+  .empty{color:var(--muted);padding:30px;text-align:center;border-radius:8px}
+  .linklike{background:transparent;border:none;color:var(--accent);cursor:pointer}
+  .top-actions{display:flex;gap:8px;align-items:center}
+  /* scrollbar */
+  .accounts::-webkit-scrollbar{width:8px}
+  .accounts::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.03);border-radius:6px}
+  @media (max-width:800px){
+    .app{flex-direction:column;padding:12px}
+    .sidebar{width:auto;display:flex;flex-direction:row;overflow:auto;border-radius:10px;padding:10px}
+    .accounts{display:flex;gap:8px}
+    .main{width:100%}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar panel" aria-label="Accounts">
+    <div class="logo"><div class="dot"></div><div>LocalVault</div></div>
+    <div class="footer-note">Create multiple accounts. Each account has its own master password and encrypted vault.</div>
+
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button id="btnCreateAccount" class="btn">+ New Account</button>
+      <button id="btnImport" class="ghost">Import</button>
+    </div>
+
+    <div class="accounts" id="accountsList" aria-live="polite" style="margin-top:12px"></div>
+
+    <div style="display:flex;gap:8px;margin-top:12px;">
+      <button id="btnDocs" class="ghost">About / Security</button>
+      <button id="btnClearAll" class="ghost danger">Clear All</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="panel topbar">
+      <div>
+        <h2 id="mainTitle">Please select an account</h2>
+        <div id="accountSubtitle" class="footer-note">No account selected</div>
+      </div>
+
+      <div class="top-actions">
+        <div class="search">
+          <input id="searchInput" placeholder="Search (title/username)..." />
+        </div>
+        <div style="display:flex;gap:8px">
+          <button id="btnAddEntry" class="btn" disabled>+ Add Entry</button>
+          <button id="btnLogout" class="ghost" disabled>Log out</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" style="flex:1;overflow:auto">
+      <div id="entriesContainer">
+        <div class="empty">No account open. Create or select an account to get started.</div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- Modals -->
+<div id="modal" class="modal-bg" role="dialog" aria-modal="true">
+  <div class="modal" id="modalContent"></div>
+</div>
+
+<script>
+/*
+  LocalVault — single-file password manager (client-side)
+  Crypto: PBKDF2 (SHA-256) -> AES-GCM (256)
+  Storage layout:
+    localStorage['pm:accounts'] = JSON.stringify(array of account names)
+    localStorage['pm:account:<name>'] = JSON.stringify({
+      salt: base64, // for PBKDF2
+      vault: base64, // AES-GCM ciphertext of vault JSON
+      iv: base64,   // AES-GCM iv for last encryption
+      createdAt, updatedAt
+    })
+  Vault plaintext: { entries: [ {id,title,username,password,notes,createdAt,updatedAt} ] }
+*/
+
+const ui = {
+  accountsList: document.getElementById('accountsList'),
+  mainTitle: document.getElementById('mainTitle'),
+  accountSubtitle: document.getElementById('accountSubtitle'),
+  entriesContainer: document.getElementById('entriesContainer'),
+  btnCreateAccount: document.getElementById('btnCreateAccount'),
+  btnAddEntry: document.getElementById('btnAddEntry'),
+  btnLogout: document.getElementById('btnLogout'),
+  btnImport: document.getElementById('btnImport'),
+  btnDocs: document.getElementById('btnDocs'),
+  btnClearAll: document.getElementById('btnClearAll'),
+  searchInput: document.getElementById('searchInput'),
+  modal: document.getElementById('modal'),
+  modalContent: document.getElementById('modalContent')
+};
+
+const STORAGE_ACCOUNTS_KEY = 'pm:accounts';
+
+function b64Encode(buf){ return btoa(String.fromCharCode(...new Uint8Array(buf))); }
+function b64Decode(s){ const bin = atob(s); const arr = new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i); return arr.buffer; }
+function rndBytes(len){ const b = new Uint8Array(len); crypto.getRandomValues(b); return b; }
+function nowIso(){ return new Date().toISOString(); }
+function uuid(){ return 'id-'+Math.random().toString(36).slice(2,11); }
+
+/* ---------- Crypto helpers ---------- */
+async function deriveKey(password, salt, iterations=250000){
+  const enc = new TextEncoder();
+  const pwKey = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
+  const key = await crypto.subtle.deriveKey(
+    { name:'PBKDF2', salt: salt, iterations: iterations, hash: 'SHA-256' },
+    pwKey,
+    { name:'AES-GCM', length: 256 },
+    true,
+    ['encrypt','decrypt']
+  );
+  return key;
+}
+
+async function encryptJson(key, obj){
+  const iv = rndBytes(12);
+  const enc = new TextEncoder();
+  const data = enc.encode(JSON.stringify(obj));
+  const cipher = await crypto.subtle.encrypt({name:'AES-GCM', iv}, key, data);
+  return { cipher: b64Encode(cipher), iv: b64Encode(iv) };
+}
+
+async function decryptJson(key, cipherB64, ivB64){
+  try{
+    const cipher = b64Decode(cipherB64);
+    const iv = b64Decode(ivB64);
+    const plain = await crypto.subtle.decrypt({name:'AES-GCM', iv}, key, cipher);
+    const dec = new TextDecoder();
+    return JSON.parse(dec.decode(plain));
+  }catch(e){
+    throw new Error('Decryption failed');
+  }
+}
+
+/* ---------- Storage ---------- */
+function listAccounts(){
+  try{
+    const raw = localStorage.getItem(STORAGE_ACCOUNTS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  }catch(e){ return []; }
+}
+function saveAccounts(list){
+  localStorage.setItem(STORAGE_ACCOUNTS_KEY, JSON.stringify(list));
+}
+function saveAccountBlob(name, blob){ // blob: {salt, vault, iv, createdAt, updatedAt}
+  localStorage.setItem('pm:account:'+name, JSON.stringify(blob));
+  const accounts = listAccounts();
+  if(!accounts.includes(name)){ accounts.push(name); saveAccounts(accounts); }
+}
+function getAccountBlob(name){
+  const raw = localStorage.getItem('pm:account:'+name);
+  return raw ? JSON.parse(raw) : null;
+}
+function deleteAccount(name){
+  localStorage.removeItem('pm:account:'+name);
+  const accounts = listAccounts().filter(a=>a!==name);
+  saveAccounts(accounts);
+}
+
+/* ---------- App state ---------- */
+let APP = {
+  currentAccount: null,    // name
+  currentKey: null,        // CryptoKey
+  currentVault: null       // object {entries: [...]}
+};
+
+/* ---------- UI rendering ---------- */
+function renderAccountsList(){
+  const accounts = listAccounts();
+  ui.accountsList.innerHTML = '';
+  if(accounts.length === 0){
+    ui.accountsList.innerHTML = '<div class="empty">No accounts yet. Create one.</div>';
+    return;
+  }
+  accounts.forEach(name=>{
+    const blob = getAccountBlob(name);
+    const item = document.createElement('div');
+    item.className = 'account-item' + (APP.currentAccount===name ? ' active' : '');
+    item.innerHTML = `<div>
+        <div style="font-weight:600">${escapeHtml(name)}</div>
+        <div class="footer-note">${blob?.createdAt ? 'Created: '+blob.createdAt.split('T')[0] : ''}</div>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button class="ghost" data-action="open" data-name="${escapeHtml(name)}">Open</button>
+        <button class="ghost" data-action="del" data-name="${escapeHtml(name)}">Del</button>
+      </div>`;
+    ui.accountsList.appendChild(item);
+  });
+  // attach handlers
+  ui.accountsList.querySelectorAll('button').forEach(btn=>{
+    btn.addEventListener('click', e=>{
+      const act = btn.dataset.action;
+      const name = btn.dataset.name;
+      if(act==='open') showOpenAccountModal(name);
+      if(act==='del') {
+        if(confirm('Delete account "'+name+'" and its data from this browser? This cannot be undone.')) {
+          if(APP.currentAccount===name) logout();
+          deleteAccount(name);
+          renderAccountsList();
+        }
+      }
+    });
+  });
+}
+
+function renderVault(){
+  if(!APP.currentAccount){
+    ui.mainTitle.textContent = 'Please select an account';
+    ui.accountSubtitle.textContent = 'No account selected';
+    ui.entriesContainer.innerHTML = '<div class="empty">No account open. Create or select an account to get started.</div>';
+    ui.btnAddEntry.disabled = true;
+    ui.btnLogout.disabled = true;
+    return;
+  }
+  ui.mainTitle.textContent = APP.currentAccount;
+  ui.accountSubtitle.textContent = 'Vault unlocked — entries stored locally (encrypted)';
+  ui.btnAddEntry.disabled = false;
+  ui.btnLogout.disabled = false;
+
+  const q = ui.searchInput.value.trim().toLowerCase();
+  const entries = APP.currentVault?.entries || [];
+  const filtered = entries.filter(e=>{
+    if(!q) return true;
+    return (e.title||'').toLowerCase().includes(q) || (e.username||'').toLowerCase().includes(q);
+  });
+
+  if(filtered.length===0){
+    ui.entriesContainer.innerHTML = '<div class="empty">No entries yet for this account.</div>';
+    return;
+  }
+  const grid = document.createElement('div');
+  grid.className = 'entries';
+  filtered.forEach(entry=>{
+    const card = document.createElement('div');
+    card.className = 'entry panel';
+    const shortUser = entry.username ? escapeHtml(entry.username) : '<span class="footer-note">no username</span>';
+    const created = new Date(entry.createdAt).toLocaleString();
+    card.innerHTML = `
+      <h4>${escapeHtml(entry.title)}</h4>
+      <div class="meta">${shortUser} • <span class="footer-note">created ${created}</span></div>
+      <div>${escapeHtml(entry.notes || '')}</div>
+      <div class="actions">
+        <button class="small" data-act="view" data-id="${entry.id}">View</button>
+        <button class="small" data-act="copy" data-id="${entry.id}">Copy</button>
+        <button class="small" data-act="edit" data-id="${entry.id}">Edit</button>
+        <button class="small" data-act="del" data-id="${entry.id}">Delete</button>
+      </div>
+    `;
+    grid.appendChild(card);
+  });
+  ui.entriesContainer.innerHTML = '';
+  ui.entriesContainer.appendChild(grid);
+
+  // attach handlers
+  ui.entriesContainer.querySelectorAll('button').forEach(b=>{
+    b.addEventListener('click', async e=>{
+      const id = b.dataset.id;
+      const act = b.dataset.act;
+      const entry = APP.currentVault.entries.find(x=>x.id===id);
+      if(!entry) return alert('Entry not found');
+      if(act==='view') showViewEntryModal(entry);
+      if(act==='copy') {
+        await copyToClipboard(entry.password || '');
+        flash('Password copied to clipboard');
+      }
+      if(act==='edit') showEditEntryModal(entry);
+      if(act==='del') {
+        if(confirm('Delete entry "'+entry.title+'"?')) {
+          APP.currentVault.entries = APP.currentVault.entries.filter(x=>x.id!==id);
+          await persistVault();
+          renderVault();
+        }
+      }
+    });
+  });
+}
+
+/* ---------- Modal helpers ---------- */
+function showModal(html){
+  ui.modalContent.innerHTML = html;
+  ui.modal.style.display = 'flex';
+  // close when click outside
+  ui.modal.onclick = (ev)=>{ if(ev.target===ui.modal) closeModal(); };
+}
+function closeModal(){ ui.modal.style.display = 'none'; ui.modalContent.innerHTML = ''; ui.modal.onclick = null; }
+
+function escapeHtml(s){ if(!s) return ''; return String(s).replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]); }
+
+/* ---------- Flash / small feedback ---------- */
+function flash(msg){
+  const el = document.createElement('div');
+  el.style.position='fixed'; el.style.right='18px'; el.style.bottom='18px'; el.style.background='rgba(255,255,255,0.04)';
+  el.style.padding='10px 14px'; el.style.borderRadius='10px'; el.style.color='#e6eef6'; el.style.boxShadow='0 10px 30px rgba(2,6,20,0.7)';
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(()=>document.body.removeChild(el), 2200);
+}
+
+/* ---------- Account flows ---------- */
+ui.btnCreateAccount.addEventListener('click', ()=>{
+  showModal(`
+    <h3>Create new account</h3>
+    <label>Account name</label><input id="m_name" type="text" placeholder="e.g. personal, work" />
+    <label>Master password</label><input id="m_pw" type="password" placeholder="Strong password" />
+    <label>Confirm master password</label><input id="m_pw2" type="password" placeholder="Confirm" />
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button id="m_create" class="btn">Create</button>
+      <button id="m_cancel" class="ghost">Cancel</button>
+    </div>
+    <div class="footer-note" style="margin-top:10px">This creates a local encrypted vault in your browser. Keep your master password safe.</div>
+  `);
+  document.getElementById('m_cancel').onclick = closeModal;
+  document.getElementById('m_create').onclick = async ()=>{
+    const name = document.getElementById('m_name').value.trim();
+    const pw = document.getElementById('m_pw').value;
+    const pw2 = document.getElementById('m_pw2').value;
+    if(!name) return alert('Account name required');
+    if(!pw || pw.length<8) return alert('Choose a master password with at least 8 characters');
+    if(pw!==pw2) return alert('Passwords do not match');
+    if(listAccounts().includes(name)) {
+      if(!confirm('An account named "'+name+'" exists. Overwrite?')) return;
+    }
+    const salt = rndBytes(16);
+    const key = await deriveKey(pw, salt);
+    const vault = { entries: [] };
+    const enc = await encryptJson(key, vault);
+    const blob = { salt: b64Encode(salt), vault: enc.cipher, iv: enc.iv, createdAt: nowIso(), updatedAt: nowIso() };
+    saveAccountBlob(name, blob);
+    closeModal();
+    renderAccountsList();
+    flash('Account created');
+  };
+});
+
+async function showOpenAccountModal(name){
+  showModal(`
+    <h3>Unlock account: ${escapeHtml(name)}</h3>
+    <label>Master password</label><input id="o_pw" type="password" />
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button id="o_open" class="btn">Unlock</button>
+      <button id="o_cancel" class="ghost">Cancel</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button id="o_export" class="ghost">Export (encrypted)</button>
+      <button id="o_change" class="ghost">Change master password</button>
+    </div>
+  `);
+  document.getElementById('o_cancel').onclick = closeModal;
+  document.getElementById('o_export').onclick = ()=>{ exportAccount(name); };
+  document.getElementById('o_change').onclick = ()=>{ showChangeMasterModal(name); };
+
+  document.getElementById('o_open').onclick = async ()=>{
+    const pw = document.getElementById('o_pw').value;
+    const blob = getAccountBlob(name);
+    if(!blob) return alert('Account not found');
+    try{
+      const salt = b64Decode(blob.salt);
+      const key = await deriveKey(pw, salt);
+      const vault = await decryptJson(key, blob.vault, blob.iv);
+      // success
+      APP.currentAccount = name;
+      APP.currentKey = key;
+      APP.currentVault = vault;
+      closeModal();
+      renderAccountsList();
+      renderVault();
+      flash('Unlocked '+name);
+    }catch(e){
+      alert('Incorrect password or corrupted vault');
+    }
+  };
+}
+
+async function exportAccount(name){
+  const blob = getAccountBlob(name);
+  if(!blob) return alert('Account missing');
+  const filename = `localvault-${name}-export-${(new Date()).toISOString().slice(0,19).replace(/:/g,'-')}.json`;
+  const data = JSON.stringify({ name, blob }, null, 2);
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([data], {type:'application/json'}));
+  link.download = filename;
+  link.click();
+  flash('Exported encrypted vault (file saved)');
+}
+
+function showChangeMasterModal(name){
+  showModal(`
+    <h3>Change master password for ${escapeHtml(name)}</h3>
+    <label>Current master password</label><input id="c_old" type="password" />
+    <label>New master password</label><input id="c_new" type="password" />
+    <label>Confirm new password</label><input id="c_new2" type="password" />
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button id="c_do" class="btn">Change</button>
+      <button id="c_cancel" class="ghost">Cancel</button>
+    </div>
+  `);
+  document.getElementById('c_cancel').onclick = closeModal;
+  document.getElementById('c_do').onclick = async ()=>{
+    const oldp = document.getElementById('c_old').value;
+    const newp = document.getElementById('c_new').value;
+    const newp2 = document.getElementById('c_new2').value;
+    if(!newp || newp.length<8) return alert('New password must be at least 8 chars');
+    if(newp!==newp2) return alert('New passwords do not match');
+    const blob = getAccountBlob(name);
+    if(!blob) return alert('Account missing');
+    try{
+      const saltOld = b64Decode(blob.salt);
+      const keyOld = await deriveKey(oldp, saltOld);
+      const vault = await decryptJson(keyOld, blob.vault, blob.iv); // verify old
+      // create new salt, derive new key and re-encrypt
+      const saltNew = rndBytes(16);
+      const keyNew = await deriveKey(newp, saltNew);
+      const enc = await encryptJson(keyNew, vault);
+      const newBlob = { salt: b64Encode(saltNew), vault: enc.cipher, iv: enc.iv, createdAt: blob.createdAt, updatedAt: nowIso() };
+      saveAccountBlob(name, newBlob);
+      closeModal();
+      flash('Master password updated');
+    }catch(e){
+      alert('Current master password incorrect or vault corrupted');
+    }
+  };
+}
+
+/* ---------- Entry CRUD ---------- */
+ui.btnAddEntry.addEventListener('click', ()=> showAddEntryModal());
+
+function showAddEntryModal(){
+  showModal(`
+    <h3>New entry in ${escapeHtml(APP.currentAccount)}</h3>
+    <label>Title</label><input id="e_title" type="text" placeholder="e.g. Gmail" />
+    <label>Username / email</label><input id="e_user" type="text" />
+    <label>Password</label><input id="e_pass" type="text" />
+    <label>Notes</label><textarea id="e_notes" rows="4"></textarea>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button id="e_gen" class="ghost">Generate</button>
+      <button id="e_save" class="btn">Save</button>
+      <button id="e_cancel" class="ghost">Cancel</button>
+    </div>
+  `);
+  document.getElementById('e_cancel').onclick = closeModal;
+  document.getElementById('e_gen').onclick = ()=>{
+    document.getElementById('e_pass').value = randomPassword(16);
+  };
+  document.getElementById('e_save').onclick = async ()=>{
+    const title = document.getElementById('e_title').value.trim();
+    const username = document.getElementById('e_user').value.trim();
+    const password = document.getElementById('e_pass').value;
+    const notes = document.getElementById('e_notes').value.trim();
+    if(!title) return alert('Title required');
+    const entry = { id: uuid(), title, username, password, notes, createdAt: nowIso(), updatedAt: nowIso() };
+    APP.currentVault.entries.push(entry);
+    await persistVault();
+    closeModal();
+    renderVault();
+  };
+}
+
+function showEditEntryModal(entry){
+  showModal(`
+    <h3>Edit entry</h3>
+    <label>Title</label><input id="e_title" type="text" value="${escapeHtml(entry.title)}" />
+    <label>Username</label><input id="e_user" type="text" value="${escapeHtml(entry.username)}" />
+    <label>Password</label><input id="e_pass" type="text" value="${escapeHtml(entry.password)}" />
+    <label>Notes</label><textarea id="e_notes" rows="4">${escapeHtml(entry.notes)}</textarea>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button id="e_gen" class="ghost">Generate</button>
+      <button id="e_save" class="btn">Save</button>
+      <button id="e_cancel" class="ghost">Cancel</button>
+    </div>
+  `);
+  document.getElementById('e_cancel').onclick = closeModal;
+  document.getElementById('e_gen').onclick = ()=> { document.getElementById('e_pass').value = randomPassword(16); };
+  document.getElementById('e_save').onclick = async ()=>{
+    entry.title = document.getElementById('e_title').value.trim();
+    entry.username = document.getElementById('e_user').value.trim();
+    entry.password = document.getElementById('e_pass').value;
+    entry.notes = document.getElementById('e_notes').value.trim();
+    entry.updatedAt = nowIso();
+    await persistVault();
+    closeModal();
+    renderVault();
+  };
+}
+
+function showViewEntryModal(entry){
+  showModal(`
+    <h3>${escapeHtml(entry.title)}</h3>
+    <div><strong>Username:</strong> ${escapeHtml(entry.username||'')}</div>
+    <div style="margin-top:8px"><strong>Password:</strong> <span style="font-family:monospace">${escapeHtml(entry.password||'')}</span></div>
+    <div style="margin-top:8px"><strong>Notes:</strong><div style="margin-top:6px">${escapeHtml(entry.notes||'')}</div></div>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button id="v_copy" class="btn">Copy password</button>
+      <button id="v_close" class="ghost">Close</button>
+    </div>
+  `);
+  document.getElementById('v_close').onclick = closeModal;
+  document.getElementById('v_copy').onclick = async ()=>{
+    await copyToClipboard(entry.password || '');
+    flash('Password copied to clipboard');
+  };
+}
+
+/* ---------- Persist vault ---------- */
+async function persistVault(){
+  if(!APP.currentAccount || !APP.currentKey || !APP.currentVault) throw new Error('not ready');
+  const enc = await encryptJson(APP.currentKey, APP.currentVault);
+  const blob = getAccountBlob(APP.currentAccount);
+  const newBlob = { salt: blob.salt, vault: enc.cipher, iv: enc.iv, createdAt: blob.createdAt, updatedAt: nowIso() };
+  saveAccountBlob(APP.currentAccount, newBlob);
+}
+
+/* ---------- Logout ---------- */
+function logout(){
+  APP.currentAccount = null;
+  APP.currentKey = null;
+  APP.currentVault = null;
+  renderAccountsList();
+  renderVault();
+  flash('Logged out');
+}
+ui.btnLogout.addEventListener('click', ()=>{ logout(); });
+
+/* ---------- Search ---------- */
+ui.searchInput.addEventListener('input', ()=> renderVault());
+
+/* ---------- Import ----------
+   Import expects JSON produced by exportAccount: { name, blob }
+*/
+ui.btnImport.addEventListener('click', ()=>{
+  showModal(`
+    <h3>Import account (encrypted)</h3>
+    <label>Select JSON file</label>
+    <input id="import_file" type="file" accept="application/json" />
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button id="import_do" class="btn">Import</button>
+      <button id="import_cancel" class="ghost">Cancel</button>
+    </div>
+  `);
+  document.getElementById('import_cancel').onclick = closeModal;
+  document.getElementById('import_do').onclick = async ()=>{
+    const f = document.getElementById('import_file').files[0];
+    if(!f) return alert('Choose a file');
+    try{
+      const txt = await f.text();
+      const obj = JSON.parse(txt);
+      if(!obj.name || !obj.blob) return alert('Invalid file');
+      if(listAccounts().includes(obj.name)){
+        if(!confirm('Account "'+obj.name+'" exists. Overwrite?')) return;
+      }
+      saveAccountBlob(obj.name, obj.blob);
+      closeModal();
+      renderAccountsList();
+      flash('Imported account '+obj.name);
+    }catch(e){
+      alert('Import failed: '+e.message);
+    }
+  };
+});
+
+/* ---------- Docs / Clear ---------- */
+ui.btnDocs.addEventListener('click', ()=>{
+  showModal(`
+    <h3>About & Security</h3>
+    <p>This is a local, client-side password vault demo. Vaults are encrypted with AES-GCM using a key derived from your master password via PBKDF2. Data is stored in the browser's <code>localStorage</code>.</p>
+    <ul>
+      <li>Pros: Works offline, keys derived locally, no server required.</li>
+      <li>Cons: localStorage can be accessed by scripts on the same origin. Not audited for production use.</li>
+    </ul>
+    <div class="footer-note">Recommendations: use a strong unique master password, back up encrypted exports to secure storage, and prefer audited password managers for sensitive purposes.</div>
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="btn" onclick="document.getElementById('modal').style.display='none';">Close</button>
+    </div>
+  `);
+});
+
+ui.btnClearAll.addEventListener('click', ()=>{
+  if(confirm('Clear ALL LocalVault data from this browser? This will delete all accounts stored here.')) {
+    // remove all keys prefixed with pm:
+    Object.keys(localStorage).filter(k=>k.startsWith('pm:')).forEach(k=>localStorage.removeItem(k));
+    APP.currentAccount = null; APP.currentKey = null; APP.currentVault = null;
+    renderAccountsList(); renderVault();
+    flash('All data cleared');
+  }
+});
+
+/* ---------- Utilities ---------- */
+async function copyToClipboard(text){
+  try{
+    await navigator.clipboard.writeText(text);
+  }catch(e){
+    // fallback
+    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); document.body.removeChild(ta);
+  }
+}
+
+function randomPassword(len=16){
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()-_=+[]{}<>?';
+  let out = '';
+  const arr = new Uint32Array(len);
+  crypto.getRandomValues(arr);
+  for(let i=0;i<len;i++){ out += chars[arr[i] % chars.length]; }
+  return out;
+}
+
+/* ---------- Initialization ---------- */
+renderAccountsList();
+renderVault();
+
+/* ---------- end of script ---------- */
+</script>
+</body>
+</html>
